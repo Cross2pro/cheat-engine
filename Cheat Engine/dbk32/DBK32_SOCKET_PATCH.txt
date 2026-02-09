@@ -1,0 +1,140 @@
+// DBK32functions.pas 修改补丁
+// 将此代码应用到 DBK32functions.pas
+
+// ============================================
+// 修改 1: 在 uses 子句添加 DBKSocketComm
+// ============================================
+// 位置: 第 7-9 行
+// 原始:
+//   uses
+//     jwawindows, windows, sysutils, classes, types, registry, multicpuexecution,
+//     forms,dialogs, controls, maps, globals;
+// 
+// 修改为:
+//   uses
+//     jwawindows, windows, sysutils, classes, types, registry, multicpuexecution,
+//     forms,dialogs, controls, maps, globals, DBKSocketComm;
+
+
+// ============================================
+// 修改 2: DeviceIoControl 函数
+// ============================================
+// 位置: 大约第 440-450 行
+// 查找:
+function DeviceIoControl(hDevice: THandle; dwIoControlCode: DWORD; lpInBuffer: Pointer; nInBufferSize: DWORD; lpOutBuffer: Pointer; nOutBufferSize: DWORD; var lpBytesReturned: DWORD; lpOverlapped: POverlapped): BOOL; stdcall;
+begin
+  if hdevice=$fff00fff then
+  begin
+    //dbvm handle
+    result:=SecondaryDeviceIoControl(dwIoControlCode, lpInBuffer, nInBufferSize, lpOutBuffer, nOutBufferSize, lpBytesReturned, lpOverlapped);
+  end
+  else
+    result:=windows.DeviceIoControl(hDevice, dwIoControlCode, lpInBuffer,nInBufferSize, lpOutBuffer, nOutBufferSize, lpBytesReturned, lpOverlapped );
+end;
+
+// 替换为:
+function DeviceIoControl(hDevice: THandle; dwIoControlCode: DWORD; lpInBuffer: Pointer; nInBufferSize: DWORD; lpOutBuffer: Pointer; nOutBufferSize: DWORD; var lpBytesReturned: DWORD; lpOverlapped: POverlapped): BOOL; stdcall;
+begin
+  if hdevice=$fff00fff then
+  begin
+    //dbvm handle
+    result:=SecondaryDeviceIoControl(dwIoControlCode, lpInBuffer, nInBufferSize, lpOutBuffer, nOutBufferSize, lpBytesReturned, lpOverlapped);
+  end
+  else if DBKSocket_IsConnected then
+  begin
+    //使用Socket通信
+    result:=DBKSocket_SendRequest(dwIoControlCode, lpInBuffer, nInBufferSize, lpOutBuffer, nOutBufferSize, lpBytesReturned);
+  end
+  else
+    result:=windows.DeviceIoControl(hDevice, dwIoControlCode, lpInBuffer,nInBufferSize, lpOutBuffer, nOutBufferSize, lpBytesReturned, lpOverlapped );
+end;
+
+
+// ============================================
+// 修改 3: isDriverLoaded 函数
+// ============================================
+// 位置: 大约第 450-460 行
+// 查找:
+function isDriverLoaded(SigningIsTheCause: PBOOL): BOOL; stdcall;
+begin
+  result:=true;
+  if hdevice=INVALID_HANDLE_VALUE then
+  begin
+    if SigningIsTheCause<>nil then
+      SigningIsTheCause^:=failedduetodriversigning;
+    result:=false;
+  end;
+end;
+
+// 替换为:
+function isDriverLoaded(SigningIsTheCause: PBOOL): BOOL; stdcall;
+begin
+  result:=true;
+  if (hdevice=INVALID_HANDLE_VALUE) and (not DBKSocket_IsConnected) then
+  begin
+    if SigningIsTheCause<>nil then
+      SigningIsTheCause^:=failedduetodriversigning;
+    result:=false;
+  end;
+end;
+
+
+// ============================================
+// 修改 4: DBK32Initialize 过程
+// ============================================
+// 位置: 大约第 3400-3450 行
+// 在这段代码之后:
+        hdevice:=INVALID_HANDLE_VALUE;
+        hDevice := CreateFileW(pwidechar('\\.\'+servicename),
+                      GENERIC_READ or GENERIC_WRITE,
+                      FILE_SHARE_READ or FILE_SHARE_WRITE,
+                      nil,
+                      OPEN_EXISTING,
+                      FILE_FLAG_OVERLAPPED,
+                      0);
+
+// 添加以下代码:
+        // 尝试使用 Socket 通信连接驱动
+        if hdevice=INVALID_HANDLE_VALUE then
+        begin
+          OutputDebugString('[DBK32] Device handle invalid, trying Socket communication...');
+          if DBKSocket_Initialize then
+          begin
+            OutputDebugString('[DBK32] Socket communication initialized successfully');
+            hdevice := THandle($CEDB0001); // 虚拟句柄表示使用 Socket
+          end
+          else
+          begin
+            OutputDebugString('[DBK32] Socket communication failed');
+          end;
+        end
+        else
+        begin
+          // 优先使用 Socket 通信
+          OutputDebugString('[DBK32] Device handle valid, trying Socket communication...');
+          if DBKSocket_Initialize then
+          begin
+            OutputDebugString('[DBK32] Using Socket communication instead of IRP');
+            CloseHandle(hdevice);
+            hdevice := THandle($CEDB0001);
+          end
+          else
+          begin
+            OutputDebugString('[DBK32] Socket failed, using IRP communication');
+          end;
+        end;
+
+
+// ============================================
+// 修改 5: 添加 finalization 部分
+// ============================================
+// 位置: 文件末尾，在 end. 之前
+// 如果已有 finalization 部分，在其中添加:
+  DBKSocket_Cleanup;
+
+// 如果没有 finalization 部分，添加:
+finalization
+  DBKSocket_Cleanup;
+
+end.
+

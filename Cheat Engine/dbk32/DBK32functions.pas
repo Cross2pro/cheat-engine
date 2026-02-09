@@ -7,7 +7,7 @@ interface
 {$ifdef windows}
 uses
   jwawindows, windows, sysutils, classes, types, registry, multicpuexecution,
-  forms,dialogs, controls, maps, globals;
+  forms,dialogs, controls, maps, globals, DBKSocketComm;
 
 //xp sp2
 //ThreadsProcess=220
@@ -472,6 +472,11 @@ begin
   begin
     //dbvm handle
     result:=SecondaryDeviceIoControl(dwIoControlCode, lpInBuffer, nInBufferSize, lpOutBuffer, nOutBufferSize, lpBytesReturned, lpOverlapped);
+  end
+  else if DBKSocket_IsConnected then
+  begin
+    //使用Socket通信
+    result:=DBKSocket_SendRequest(dwIoControlCode, lpInBuffer, nInBufferSize, lpOutBuffer, nOutBufferSize, lpBytesReturned);
   end
   else
     result:=windows.DeviceIoControl(hDevice, dwIoControlCode, lpInBuffer,nInBufferSize, lpOutBuffer, nOutBufferSize, lpBytesReturned, lpOverlapped );
